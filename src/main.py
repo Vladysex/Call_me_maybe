@@ -1,16 +1,20 @@
 import argparse
-from sys import exit
 from argparse import ArgumentParser
 import json
 import numpy as np
 import re
+import os
+import sys
+from typing import List, Any
 
-from .file_parsing import reading_file, objects_creation
+from .file_parsing import reading_file, objects_creation, FunctionDefinition
 from .llm_handler import StateMachine, States
 from llm_sdk import Small_LLM_Model
 
 
 def parse_arguments() -> argparse.Namespace:
+    """Parse CLI arguments for function
+    definitions, input prompts, and output path."""
     parser = ArgumentParser()
 
     parser.add_argument("-fd", "--function-definition-file", type=str,
@@ -23,39 +27,30 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_system_instruction(parsed_functions) -> str:
+def build_system_instruction(
+        parsed_functions: List[FunctionDefinition]) -> str:
+    """Build the system prompt from template and function descriptions.
+    text and available function metadata."""
     functions_context = '\n'.join(
         [f'- {func.name}:'
          f' {getattr(func, "description", "")}' for func in parsed_functions])
-    return (
-            'You are a strict AI data extractor. Your ONLY job is to extract'
-            'parameters for function calling.\n\n'
-            'CRITICAL RULES:\n'
-            '1. DO NOT execute the function. DO NOT answer the user\'s prompt.'
-            'Just extract the exact arguments.\n'
-            '2. For regex substitution, the \'replacement\' parameter is ONLY'
-            'the new word or character. NEVER return the entire modified'
-            'sentence.\n'
-            '3. If the user asks to use a symbol name (like \'asterisks\' or'
-            '\'spaces\'), use the actual character (like \'*\' or \' \') '
-            'in the \'replacement\' parameter.\n\n'
-            'EXAMPLES:\n'
-            'User: "Replace all numbers in \'test 123\' with \'NUMBERS\'"\n'
-            'Correct: "source_string": "test 123", "regex": "[0-9]+",'
-            ' "replacement": "NUMBERS"\n\n'
-            'User: "Replace all vowels in \'hello\' with \'asterisks\'"\n'
-            'Correct: "source_string": "hello", "regex": "[aeiouAEIOU]",'
-            '"replacement": "*"\n\n'
-            'User: "Substitute \'apple\' with \'orange\' in \''
-            'I like apple\'"\n'
-            'Correct: "source_string": "I like apple", "regex": '
-            '"apple", "replacement": "orange"\n\n'
-            f'Available functions:\n{functions_context}\n\n'
-            'Extract the parameters now. Do NOT write parameter types.'
-        )
+    try:
+        with open('data/prompt.txt', 'r', encoding='utf-8') as f:
+            content = f.read()
+    except FileNotFoundError:
+        print('Critical error: Prompt file not found.')
+        sys.exit(1)
+
+    final_prompt = (f'{content}\n'
+                    f'Available functions:\n{functions_context}\n\n'
+                    f'Extract the parameters now. '
+                    f'Do NOT write parameter types.')
+    return final_prompt
 
 
-def clean_and_parse_json(raw_json_string) -> dict | None:
+def clean_and_parse_json(raw_json_string: str) -> dict[str, Any] | None | Any:
+    """Normalize malformed JSON fragments and parse the result.
+    patterns and parse into a Python object."""
     cleaned_string = re.sub(r'\}\}?\s*,\s*"', ', "', raw_json_string)
     cleaned_string = cleaned_string.rstrip(' ,}\n')
     cleaned_string += '}}'
@@ -69,7 +64,13 @@ def clean_and_parse_json(raw_json_string) -> dict | None:
 
 
 def process_single_prompt(
-        model, prompt_data, parsed_functions, sys_instruction) -> dict | None:
+        model: Small_LLM_Model,
+        prompt_data: dict[str, str],
+        parsed_functions: List[FunctionDefinition],
+        sys_instruction: str
+) -> dict[str, Any] | None:
+    """Generate one constrained function-call object for a prompt.
+    JSON object for a single user prompt."""
 
     state_machine = StateMachine(
         model=model,
@@ -112,27 +113,41 @@ def process_single_prompt(
 
 
 def main() -> None:
+    """Run the pipeline and write extracted calls to output JSON.
+    and save extracted calls to output JSON."""
     args = parse_arguments()
 
     prompts = reading_file(args.input)
+
+    if not prompts:
+        print('Critical error. There are no input prompts to process.')
+        sys.exit(1)
+
+    if not isinstance(prompts, list):
+        print("Critical error: Json file has to be a list.")
+        sys.exit(1)
+
     parsed_functions = objects_creation(args.function_definition_file)
+    if not isinstance(parsed_functions, list):
+        print("Critical error: Json file has to be a list.")
+        sys.exit(1)
+
+    if not parsed_functions:
+        print("Critical error: parsed_functions is empty or falsy.")
+        sys.exit(1)
 
     model = Small_LLM_Model()
     sys_instruction = build_system_instruction(parsed_functions)
 
     all_results = []
 
-    stops = False
-
     for prompt_data in prompts:
         result = process_single_prompt(
             model, prompt_data, parsed_functions, sys_instruction)
 
-        stops = True
-        if stops:
-            exit(0)
         if result is not None:
             all_results.append(result)
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=4, ensure_ascii=False)
 

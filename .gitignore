@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+
+# Type checker and test caches
+.mypy_cache/
+.pytest_cache/
+
+
+.idea/
+.vscode/
+
+
+*.log
+*.tmp

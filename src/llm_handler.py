@@ -2,6 +2,9 @@ import json
 from typing import List, Any
 from enum import Enum, auto
 
+from llm_sdk import Small_LLM_Model
+from src.file_parsing import FunctionDefinition
+
 
 class States(Enum):
     EXPECTING_PROMPT_KEY = auto()
@@ -13,8 +16,10 @@ class States(Enum):
 
 
 class StateMachine:
-    def __init__(self, model, original_user_prompt: str,
-                 list_of_function: List) -> None:
+    def __init__(self, model: Small_LLM_Model, original_user_prompt: str,
+                 list_of_function: List[FunctionDefinition]) -> None:
+        """Initialize FSM state and pre-tokenized forced JSON fragments."""
+
         self.list_of_function = list_of_function
         self.original_user_prompt = original_user_prompt
         list_of_function_names = [func.name for func in list_of_function]
@@ -44,6 +49,8 @@ class StateMachine:
         self.param_key_step = 0
 
     def get_allowed_tokens(self) -> List[int] | str:
+        """Return allowed next token ids for
+        the current decoding state."""
         if self.current_state == States.EXPECTING_PROMPT_KEY:
             return [self.prompt_key_ids[self.current_step]]
 
@@ -68,7 +75,10 @@ class StateMachine:
         return []
 
     def advance_state(self, generated_token_id: int,
-                      generated_text: str, model) -> None:
+                      generated_text: str, model: Small_LLM_Model) -> None:
+        """Update state after one token
+        and dispatch the right handler."""
+
         if self.current_state == States.EXPECTING_PROMPT_KEY:
             self._handle_prompt_key()
         elif self.current_state == States.EXPECTING_FUNCTION_NAME:
@@ -81,11 +91,14 @@ class StateMachine:
             self._handle_parameters_value(generated_text, model)
 
     def _handle_prompt_key(self) -> None:
+        """Advance through the forced
+        JSON prefix before function name decoding."""
         self.current_step += 1
         if self.current_step >= len(self.prompt_key_ids):
             self.current_state = States.EXPECTING_FUNCTION_NAME
 
     def _handle_function_name(self, generated_token_id: int) -> None:
+        """Accumulate function-name tokens and lock on full match."""
         self.current_name_tokens.append(generated_token_id)
 
         if self.current_name_tokens in self.list_of_ids:
@@ -93,7 +106,10 @@ class StateMachine:
             self.chosen_function = self.list_of_function[func_index]
             self.current_state = States.EXPECTING_PARAMETERS_KEY
 
-    def _handle_parameters_key(self, model) -> None:
+    def _handle_parameters_key(self, model: Small_LLM_Model) -> None:
+        """Finalize parameters opening
+        and prepare the first key."""
+
         self.parameter_step += 1
         if self.parameter_step >= len(self.list_of_parameter_ids):
             self.param_names = list(self.chosen_function.parameters.keys())
@@ -105,11 +121,18 @@ class StateMachine:
                 self.current_state = States.DONE
 
     def _handle_forcing_parameter_key(self) -> None:
+        """Consume forced parameter-key tokens,
+        then switch to value generation."""
         self.param_key_step += 1
         if self.param_key_step >= len(self.current_param_key_ids):
+
             self.current_state = States.EXPECTING_PARAMETERS_VALUE
 
-    def _handle_parameters_value(self, generated_text: str, model) -> None:
+    def _handle_parameters_value(
+            self, generated_text: str, model: Small_LLM_Model
+    ) -> None:
+        """Detect value boundary
+        and move to next key or finish."""
         stop_triggered = False
 
         if self.current_param_type == 'string':
@@ -128,7 +151,11 @@ class StateMachine:
             else:
                 self.current_state = States.DONE
 
-    def _prepare_next_parameter_key(self, model, prefix_str: str) -> None:
+    def _prepare_next_parameter_key(
+            self, model: Small_LLM_Model, prefix_str: str
+    ) -> None:
+        """Create forced tokens for
+        the next schema parameter key and type context."""
         next_param_name = self.param_names[self.current_param_index]
         current_param = self.chosen_function.parameters[next_param_name]
         self.current_param_type = current_param.type

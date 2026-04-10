@@ -1,0 +1,10 @@
+[
+    {
+        "prompt": "What is the sum of two 4",
+        "name": "fn_add_two_numbers",
+        "parameters": {
+            "a": 4,
+            "b": 4
+        }
+    }
+]

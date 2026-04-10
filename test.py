@@ -1,0 +1,1 @@
+.PHONY: install run debug clean lint

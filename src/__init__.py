@@ -1,4 +1,4 @@
-from .test_main import main
+from .main import main
 
-if 1 == 2:
+if False:
     main()
