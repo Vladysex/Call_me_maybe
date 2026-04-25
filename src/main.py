@@ -54,7 +54,6 @@ def clean_and_parse_json(raw_json_string: str) -> dict[str, Any] | None | Any:
     cleaned_string = re.sub(r'\}\}?\s*,\s*"', ', "', raw_json_string)
     cleaned_string = cleaned_string.rstrip(' ,}\n')
     cleaned_string += '}}'
-
     try:
         return json.loads(cleaned_string)
     except json.JSONDecodeError as e:

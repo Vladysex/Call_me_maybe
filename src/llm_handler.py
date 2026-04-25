@@ -28,7 +28,7 @@ class StateMachine:
         self.current_step = 0
 
         safe_prompt = json.dumps(original_user_prompt)
-        target_string = f'{{"prompt": {safe_prompt},\n "name": "'
+        target_string = f'{{"prompt":{safe_prompt},\n "name": "'
         parameter_string = '",\n "parameters":{'
 
         self.prompt_key_ids = model.encode(target_string)[0].tolist()
